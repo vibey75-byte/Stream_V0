@@ -1,32 +1,21 @@
 {
   "name": "stream_v0",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Stream_V0 - Professional Multi-Source M3U8 Extractor (45+ Verified Sources)",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "node src/test.js",
-    "postinstall": "playwright install chromium"
+    "test": "node src/test.js"
   },
-  "keywords": [
-    "stream",
-    "vidsrc",
-    "m3u8",
-    "extractor",
-    "4k",
-    "subtitles",
-    "multi-source",
-    "hls"
-  ],
+  "keywords": ["stream", "vidsrc", "m3u8", "extractor", "4k", "subtitles"],
   "author": "Maaoui Adem",
   "license": "MIT",
   "dependencies": {
     "axios": "^1.6.2",
     "cheerio": "^1.0.0-rc.12",
     "express": "^4.18.2",
-    "playwright": "^1.40.0",
     "node-cache": "^5.1.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
