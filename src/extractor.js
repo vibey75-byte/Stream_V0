@@ -1,14 +1,38 @@
 import axios from 'axios';
+import * as cheerio from 'cheerio';
+import { chromium } from 'playwright';
 import { getSourceById } from './sources.js';
 
 export class AdvancedExtractor {
   constructor() {
+    this.browser = null;
     this.reliabilityCache = new Map();
+  }
+
+  async initBrowser() {
+    if (!this.browser) {
+      this.browser = await chromium.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--single-process',
+          '--no-zygote'
+        ]
+      });
+    }
+    return this.browser;
   }
 
   async extract({ source, movieId, season, episode, options = {} }) {
     const sourceData = getSourceById(source);
-    if (!sourceData) throw new Error(`Source "${source}" not found`);
+
+    if (!sourceData) {
+      throw new Error(`Source "${source}" not found`);
+    }
 
     let embedUrl;
     if (season && episode) {
@@ -17,104 +41,138 @@ export class AdvancedExtractor {
       embedUrl = `${sourceData.baseUrl}${movieId}`;
     }
 
+    console.log(`Extracting from ${sourceData.name}: ${embedUrl}`);
+
     try {
-      const m3u8Urls = await this.fetchFromAPI(movieId, season, episode);
-      await this.updateReliability(source, m3u8Urls.length > 0);
+      const browser = await this.initBrowser();
+      const page = await browser.newPage();
+
+      const m3u8Urls = [];
+      const foundUrls = new Set();
+
+      page.on('response', async (response) => {
+        const url = response.url();
+        if ((url.includes('.m3u8') || url.includes('m3u8')) && !foundUrls.has(url)) {
+          foundUrls.add(url);
+          m3u8Urls.push({
+            url,
+            quality: this.detectQualityFromUrl(url),
+            type: 'hls'
+          });
+        }
+      });
+
+      await page.goto(embedUrl, {
+        waitUntil: 'networkidle',
+        timeout: parseInt(process.env.BROWSER_TIMEOUT) || 30000
+      });
+
+      // انتظر 5 ثواني باش تحمل الـ M3U8
+      await page.waitForTimeout(5000);
+
+      const jsUrls = await page.evaluate(() => {
+        const urls = new Set();
+        document.querySelectorAll('script').forEach(script => {
+          const content = script.textContent || '';
+          const regex1 = /["'`](https?:\/\/[^"'`\s]*\.m3u8[^"'`\s]*?)["'`]/gi;
+          const regex2 = /source:\s*["'`](https?:\/\/[^"'`\s]*\.m3u8[^"'`\s]*?)["'`]/gi;
+          const regex3 = /file:\s*["'`](https?:\/\/[^"'`\s]*\.m3u8[^"'`\s]*?)["'`]/gi;
+          let match;
+          while ((match = regex1.exec(content)) !== null) urls.add(match[1]);
+          while ((match = regex2.exec(content)) !== null) urls.add(match[1]);
+          while ((match = regex3.exec(content)) !== null) urls.add(match[1]);
+        });
+        return Array.from(urls);
+      });
+
+      jsUrls.forEach(url => {
+        if (!foundUrls.has(url)) {
+          foundUrls.add(url);
+          m3u8Urls.push({
+            url,
+            quality: this.detectQualityFromUrl(url),
+            type: 'hls'
+          });
+        }
+      });
+
+      let subtitles = [];
+      if (options.fetchSubtitles !== false) {
+        subtitles = await this.extractSubtitles(page);
+      }
+
+      await page.close();
+      await this.updateReliability(source, true);
+
       return {
         source: sourceData.name,
         sourceId: source,
-        movieId, season, episode, embedUrl,
-        m3u8Urls,
-        subtitles: [],
+        movieId,
+        season,
+        episode,
+        embedUrl,
+        m3u8Urls: [...new Map(m3u8Urls.map(item => [item.url, item])).values()],
+        subtitles,
         timestamp: new Date().toISOString()
       };
+
     } catch (error) {
+      console.error(`Error from ${sourceData.name}:`, error.message);
       await this.updateReliability(source, false);
       return {
         source: sourceData.name,
         sourceId: source,
-        movieId, season, episode, embedUrl,
-        m3u8Urls: [], subtitles: [],
+        movieId,
+        season,
+        episode,
+        embedUrl,
+        m3u8Urls: [],
+        subtitles: [],
         timestamp: new Date().toISOString(),
         error: error.message
       };
     }
   }
 
-  async fetchFromAPI(movieId, season, episode) {
-    const apis = [];
+  async extractSubtitles(page) {
+    const subData = await page.evaluate(() => {
+      const subs = [];
+      const seenUrls = new Set();
 
-    // VidSrc.rip API
-    if (season && episode) {
-      apis.push(`https://vidsrc.rip/api/tv/${movieId}/${season}/${episode}`);
-      apis.push(`https://vidsrc.icu/api/tv?imdb=${movieId}&season=${season}&episode=${episode}`);
-      apis.push(`https://vidsrc.me/api/tv?imdb=${movieId}&season=${season}&episode=${episode}`);
-    } else {
-      apis.push(`https://vidsrc.rip/api/movie/${movieId}`);
-      apis.push(`https://vidsrc.icu/api/movie?imdb=${movieId}`);
-      apis.push(`https://vidsrc.me/api/movie?imdb=${movieId}`);
-    }
-
-    const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Accept': 'application/json, text/plain, */*',
-      'Referer': 'https://vidsrc.me/'
-    };
-
-    for (const url of apis) {
-      try {
-        const res = await axios.get(url, {
-          headers,
-          timeout: 10000,
-          validateStatus: s => s < 500
-        });
-
-        if (res.data && res.status === 200) {
-          const links = this.parseAPIResponse(res.data);
-          if (links.length > 0) return links;
+      document.querySelectorAll('track').forEach(track => {
+        if ((track.kind === 'subtitles' || track.kind === 'captions') && !seenUrls.has(track.src)) {
+          seenUrls.add(track.src);
+          subs.push({
+            url: track.src,
+            language: track.label || track.srclang || 'en',
+            type: track.src.includes('.vtt') ? 'vtt' : 'srt'
+          });
         }
-      } catch (_) {}
-    }
-
-    return [];
-  }
-
-  parseAPIResponse(data) {
-    const links = [];
-    const foundUrls = new Set();
-
-    const addUrl = (url) => {
-      if (url && typeof url === 'string' && url.includes('.m3u8') && !foundUrls.has(url)) {
-        foundUrls.add(url);
-        links.push({ url, quality: this.detectQualityFromUrl(url), type: 'hls' });
-      }
-    };
-
-    if (typeof data === 'string') {
-      const matches = data.match(/https?:\/\/[^"'\s]*\.m3u8[^"'\s]*/gi) || [];
-      matches.forEach(addUrl);
-      return links;
-    }
-
-    if (Array.isArray(data)) {
-      data.forEach(item => {
-        addUrl(item?.url || item?.stream || item?.link || item?.src);
       });
-      return links;
-    }
 
-    if (typeof data === 'object') {
-      const checkObj = (obj) => {
-        if (!obj || typeof obj !== 'object') return;
-        Object.values(obj).forEach(val => {
-          if (typeof val === 'string') addUrl(val);
-          else if (typeof val === 'object') checkObj(val);
-        });
-      };
-      checkObj(data);
-    }
+      document.querySelectorAll('script').forEach(script => {
+        const content = script.textContent || '';
+        const regex1 = /subtitles?:\s*["'`](https?:\/\/[^"'`\s]*\.(vtt|srt)[^"'`\s]*?)["'`]/gi;
+        const regex2 = /tracks?:\s*["'`](https?:\/\/[^"'`\s]*\.(vtt|srt)[^"'`\s]*?)["'`]/gi;
+        let match;
+        while ((match = regex1.exec(content)) !== null) {
+          if (!seenUrls.has(match[1])) {
+            seenUrls.add(match[1]);
+            subs.push({ url: match[1], language: 'auto', type: match[1].includes('vtt') ? 'vtt' : 'srt' });
+          }
+        }
+        while ((match = regex2.exec(content)) !== null) {
+          if (!seenUrls.has(match[1])) {
+            seenUrls.add(match[1]);
+            subs.push({ url: match[1], language: 'auto', type: match[1].includes('vtt') ? 'vtt' : 'srt' });
+          }
+        }
+      });
 
-    return links;
+      return subs;
+    });
+
+    return [...new Map(subData.map(item => [item.url, item])).values()];
   }
 
   detectQualityFromUrl(url) {
@@ -144,5 +202,10 @@ export class AdvancedExtractor {
     return stats;
   }
 
-  async close() {}
+  async close() {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+    }
+  }
 }
