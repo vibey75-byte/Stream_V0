@@ -8,7 +8,7 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "test": "node src/test.js",
-    "postinstall": "playwright install chromium --with-deps"
+    "postinstall": "playwright install chromium"
   },
   "keywords": [
     "stream",
