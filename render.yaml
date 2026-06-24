@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: Stream_V0
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HEADLESS
+        value: true
+      - key: BROWSER_TYPE
+        value: chromium
+      - key: RENDER
+        value: true
