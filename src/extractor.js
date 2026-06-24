@@ -117,9 +117,9 @@ export class AdvancedExtractor {
       scripts.forEach(script => {
         const content = script.textContent || script.innerHTML;
         
-        const regex1 = /['"](https?://[^'"]*.m3u8[^'"]*)['"]/gi;
-        const regex2 = /source:s*['"](https?://[^'"]*.m3u8[^'"]*)['"]/gi;
-        const regex3 = /file:s*['"](https?://[^'"]*.m3u8[^'"]*)['"]/gi;
+        const regex1 = new RegExp("['"](https?://[^'"]*\\.m3u8[^'"]*)['"]", 'gi');
+        const regex2 = new RegExp("source:\\s*['"](https?://[^'"]*\\.m3u8[^'"]*)['"]", 'gi');
+        const regex3 = new RegExp("file:\\s*['"](https?://[^'"]*\\.m3u8[^'"]*)['"]", 'gi');
         
         let match;
         
@@ -173,8 +173,8 @@ export class AdvancedExtractor {
       scripts.forEach(script => {
         const content = script.textContent || script.innerHTML;
         
-        const regex1 = /subtitles?:s*['"](https?://[^'"]*.(vtt|srt)[^'"]*)['"]/gi;
-        const regex2 = /tracks?:s*['"](https?://[^'"]*.(vtt|srt)[^'"]*)['"]/gi;
+        const regex1 = new RegExp("subtitles?:\\s*['"](https?://[^'"]*\\.(vtt|srt)[^'"]*)['"]", 'gi');
+        const regex2 = new RegExp("tracks?:\\s*['"](https?://[^'"]*\\.(vtt|srt)[^'"]*)['"]", 'gi');
         
         let match;
         
@@ -249,7 +249,7 @@ export class AdvancedExtractor {
 
       $('script').each((_, element) => {
         const content = $(element).html() || '';
-        const regex = /(https?://[^"'s]*.m3u8[^"'s]*)/gi;
+        const regex = new RegExp("(https?://[^"'\\s]*\\.m3u8[^"'\\s]*)", 'gi');
         let match;
         
         while ((match = regex.exec(content)) !== null) {
