@@ -16,18 +16,20 @@ export class AdvancedExtractor {
       if (browserType === 'firefox') {
         const { firefox } = await import('playwright');
         this.browser = await firefox.launch({
-          headless: process.env.HEADLESS === 'true' || true,
+          headless: true,
           args: ['--no-sandbox']
         });
       } else {
         this.browser = await chromium.launch({
-          headless: process.env.HEADLESS === 'true' || true,
+          headless: true,
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
-            '--disable-software-rasterizer'
+            '--disable-software-rasterizer',
+            '--single-process',
+            '--no-zygote'
           ]
         });
       }
@@ -56,14 +58,67 @@ export class AdvancedExtractor {
     try {
       const browser = await this.initBrowser();
       const page = await browser.newPage();
+
+      const m3u8Urls = [];
+      const foundUrls = new Set();
+
+      page.on('response', async (response) => {
+        const url = response.url();
+        if ((url.includes('.m3u8') || url.includes('m3u8')) && !foundUrls.has(url)) {
+          foundUrls.add(url);
+          m3u8Urls.push({
+            url,
+            quality: this.detectQualityFromUrl(url),
+            type: 'hls'
+          });
+        }
+      });
       
       await page.goto(embedUrl, { 
         waitUntil: 'domcontentloaded',
         timeout: parseInt(process.env.BROWSER_TIMEOUT) || 30000
       });
 
-      const m3u8Urls = await this.extractM3U8FromPage(page);
-      
+      const jsUrls = await page.evaluate(() => {
+        const urls = new Set();
+        
+        const scripts = document.querySelectorAll('script');
+        scripts.forEach(script => {
+          const content = script.textContent || script.innerHTML;
+          
+          const regex1 = /["'](https?:\/\/[^"'\s]*\.m3u8[^"'\s]*)["']/gi;
+          const regex2 = /source:\s*["'](https?:\/\/[^"'\s]*\.m3u8[^"'\s]*)["']/gi;
+          const regex3 = /file:\s*["'](https?:\/\/[^"'\s]*\.m3u8[^"'\s]*)["']/gi;
+          
+          let match;
+          
+          while ((match = regex1.exec(content)) !== null) {
+            urls.add(match[1]);
+          }
+          while ((match = regex2.exec(content)) !== null) {
+            urls.add(match[1]);
+          }
+          while ((match = regex3.exec(content)) !== null) {
+            urls.add(match[1]);
+          }
+        });
+
+        return Array.from(urls);
+      });
+
+      jsUrls.forEach(url => {
+        if (!foundUrls.has(url)) {
+          foundUrls.add(url);
+          m3u8Urls.push({
+            url,
+            quality: this.detectQualityFromUrl(url),
+            type: 'hls'
+          });
+        }
+      });
+
+      const uniqueM3u8Urls = [...new Map(m3u8Urls.map(item => [item.url, item])).values()];
+
       let subtitles = [];
       if (options.fetchSubtitles !== false) {
         subtitles = await this.extractSubtitles(page);
@@ -80,7 +135,7 @@ export class AdvancedExtractor {
         season,
         episode,
         embedUrl,
-        m3u8Urls,
+        m3u8Urls: uniqueM3u8Urls,
         subtitles,
         timestamp: new Date().toISOString()
       };
@@ -94,69 +149,7 @@ export class AdvancedExtractor {
     }
   }
 
-  async extractM3U8FromPage(page) {
-    const m3u8Urls = [];
-    const foundUrls = new Set();
-
-    page.on('response', async (response) => {
-      const url = response.url();
-      if ((url.includes('.m3u8') || url.includes('m3u8')) && !foundUrls.has(url)) {
-        foundUrls.add(url);
-        m3u8Urls.push({
-          url,
-          quality: await this.detectQualityFromUrl(url),
-          type: 'hls'
-        });
-      }
-    });
-
-    const jsUrls = await page.evaluate(() => {
-      const urls = new Set();
-      
-      const scripts = document.querySelectorAll('script');
-      scripts.forEach(script => {
-        const content = script.textContent || script.innerHTML;
-        
-        const pattern1 = '["\\'](https?://[^"\\'\\s]*\\.m3u8[^"\\'\\s]*)["\\']';
-        const pattern2 = 'source:\\s*["\\'](https?://[^"\\'\\s]*\\.m3u8[^"\\'\\s]*)["\\']';
-        const pattern3 = 'file:\\s*["\\'](https?://[^"\\'\\s]*\\.m3u8[^"\\'\\s]*)["\\']';
-        
-        const regex1 = new RegExp(pattern1, 'gi');
-        const regex2 = new RegExp(pattern2, 'gi');
-        const regex3 = new RegExp(pattern3, 'gi');
-        
-        let match;
-        
-        while ((match = regex1.exec(content)) !== null) {
-          urls.add(match[1]);
-        }
-        while ((match = regex2.exec(content)) !== null) {
-          urls.add(match[1]);
-        }
-        while ((match = regex3.exec(content)) !== null) {
-          urls.add(match[1]);
-        }
-      });
-
-      return Array.from(urls);
-    });
-
-    jsUrls.forEach(url => {
-      if (!foundUrls.has(url)) {
-        m3u8Urls.push({
-          url,
-          quality: this.detectQualityFromUrl(url),
-          type: 'hls'
-        });
-      }
-    });
-
-    return [...new Map(m3u8Urls.map(item => [item.url, item])).values()];
-  }
-
   async extractSubtitles(page) {
-    const subtitles = [];
-
     const subData = await page.evaluate(() => {
       const subs = [];
       const seenUrls = new Set();
@@ -177,11 +170,8 @@ export class AdvancedExtractor {
       scripts.forEach(script => {
         const content = script.textContent || script.innerHTML;
         
-        const pattern1 = 'subtitles?:\\s*["\\'](https?://[^"\\'\\s]*\\.(vtt|srt)[^"\\'\\s]*)["\\']';
-        const pattern2 = 'tracks?:\\s*["\\'](https?://[^"\\'\\s]*\\.(vtt|srt)[^"\\'\\s]*)["\\']';
-        
-        const regex1 = new RegExp(pattern1, 'gi');
-        const regex2 = new RegExp(pattern2, 'gi');
+        const regex1 = /subtitles?:\s*["'](https?:\/\/[^"'\s]*\.(vtt|srt)[^"'\s]*)["']/gi;
+        const regex2 = /tracks?:\s*["'](https?:\/\/[^"'\s]*\.(vtt|srt)[^"'\s]*)["']/gi;
         
         let match;
         
@@ -190,7 +180,7 @@ export class AdvancedExtractor {
           if (url && !seenUrls.has(url)) {
             seenUrls.add(url);
             subs.push({
-              url: url.replace(/["\\']/g, ''),
+              url,
               language: 'auto',
               type: url.includes('vtt') ? 'vtt' : 'srt'
             });
@@ -201,7 +191,7 @@ export class AdvancedExtractor {
           if (url && !seenUrls.has(url)) {
             seenUrls.add(url);
             subs.push({
-              url: url.replace(/["\\']/g, ''),
+              url,
               language: 'auto',
               type: url.includes('vtt') ? 'vtt' : 'srt'
             });
@@ -215,7 +205,7 @@ export class AdvancedExtractor {
     return [...new Map(subData.map(item => [item.url, item])).values()];
   }
 
-  async detectQualityFromUrl(url) {
+  detectQualityFromUrl(url) {
     if (/4k|2160p|uhd/i.test(url)) return '4k';
     if (/1080p|fhd/i.test(url)) return '1080p';
     if (/720p|hd/i.test(url)) return '720p';
@@ -256,14 +246,13 @@ export class AdvancedExtractor {
 
       $('script').each((_, element) => {
         const content = $(element).html() || '';
-        const pattern = '(https?://[^"\\'\\s]*\\.m3u8[^"\\'\\s]*)';
-        const regex = new RegExp(pattern, 'gi');
+        const regex = /https?:\/\/[^"'\s]*\.m3u8[^"'\s]*/gi;
         let match;
         
         while ((match = regex.exec(content)) !== null) {
           m3u8Urls.push({
-            url: match[1],
-            quality: this.detectQualityFromUrl(match[1]),
+            url: match[0],
+            quality: this.detectQualityFromUrl(match[0]),
             type: 'hls'
           });
         }
@@ -274,7 +263,7 @@ export class AdvancedExtractor {
         sourceId: sourceData.id,
         movieId,
         embedUrl,
-        m3u8Urls,
+        m3u8Urls: [...new Map(m3u8Urls.map(item => [item.url, item])).values()],
         subtitles: [],
         timestamp: new Date().toISOString(),
         method: 'fallback'
