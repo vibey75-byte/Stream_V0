@@ -6,19 +6,31 @@ import { sources, getSourceById } from './sources.js';
 export class AdvancedExtractor {
   constructor() {
     this.browser = null;
+    this.reliabilityCache = new Map();
   }
 
   async initBrowser() {
     if (!this.browser) {
-      this.browser = await chromium.launch({
-        headless: process.env.HEADLESS === 'true' || true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu'
-        ]
-      });
+      const browserType = process.env.BROWSER_TYPE || 'chromium';
+      
+      if (browserType === 'firefox') {
+        const { firefox } = await import('playwright');
+        this.browser = await firefox.launch({
+          headless: process.env.HEADLESS === 'true' || true,
+          args: ['--no-sandbox']
+        });
+      } else {
+        this.browser = await chromium.launch({
+          headless: process.env.HEADLESS === 'true' || true,
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer'
+          ]
+        });
+      }
     }
     return this.browser;
   }
@@ -46,7 +58,7 @@ export class AdvancedExtractor {
       const page = await browser.newPage();
       
       await page.goto(embedUrl, { 
-        waitUntil: 'networkidle',
+        waitUntil: 'domcontentloaded',
         timeout: parseInt(process.env.BROWSER_TIMEOUT) || 30000
       });
 
@@ -58,6 +70,9 @@ export class AdvancedExtractor {
       }
 
       await page.close();
+
+      // Update reliability
+      await this.updateReliability(source, true);
 
       return {
         source: sourceData.name,
@@ -73,6 +88,10 @@ export class AdvancedExtractor {
 
     } catch (error) {
       console.error(`Error from ${sourceData.name}:`, error.message);
+      
+      // Update reliability
+      await this.updateReliability(source, false);
+      
       return await this.fallbackExtract(embedUrl, sourceData, movieId);
     }
   }
@@ -183,6 +202,25 @@ export class AdvancedExtractor {
     if (/720p|hd/i.test(url)) return '720p';
     if (/480p|sd/i.test(url)) return '480p';
     return 'auto';
+  }
+
+  async updateReliability(sourceId, success) {
+    const current = this.reliabilityCache.get(sourceId) || { tests: 0, successes: 0 };
+    current.tests++;
+    if (success) current.successes++;
+    this.reliabilityCache.set(sourceId, current);
+  }
+
+  getReliabilityStats() {
+    const stats = {};
+    this.reliabilityCache.forEach((data, sourceId) => {
+      stats[sourceId] = {
+        reliability: (data.successes / data.tests) * 100,
+        tests: data.tests,
+        successes: data.successes
+      };
+    });
+    return stats;
   }
 
   async fallbackExtract(embedUrl, sourceData, movieId) {
