@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { AdvancedExtractor } from './extractor.js';
 import { MultiSourceAggregator } from './aggregator.js';
-import { sources, sourceStats } from './sources.js';
+import { sources, sourceStats, getVerifiedSources } from './sources.js';
 
 dotenv.config();
 
@@ -21,33 +21,41 @@ const aggregator = new MultiSourceAggregator(extractor);
 app.get('/', (req, res) => {
   res.json({
     name: 'Stream_V0',
-    version: '1.0.0',
+    version: '1.1.0',
     author: 'Maaoui Adem',
-    description: 'Professional Multi-Source M3U8 Extractor',
+    description: 'Professional Multi-Source M3U8 Extractor (45+ Verified Sources)',
     features: [
-      '✅ 50+ Sources Support',
+      '✅ 45 Verified Sources (No Fake)',
+      '✅ Real Reliability Tracking',
       '✅ 4K Quality Extraction',
       '✅ Multi-Subtitle Support',
-      '✅ Speed Optimization'
+      '✅ Render/Railway Optimized'
     ],
-    stats: sourceStats,
+    stats: {
+      total: sourceStats.total,
+      verified: sourceStats.verified,
+      with4k: sourceStats.with4k,
+      withSubtitles: sourceStats.withSubtitles
+    },
     endpoints: {
       extract: '/api/extract',
       extractAll: '/api/extract-all',
       sources: '/api/sources',
-      health: '/api/health'
+      health: '/api/health',
+      reliability: '/api/reliability'
     }
   });
 });
 
 // Sources List
 app.get('/api/sources', (req, res) => {
-  const { tier, quality, subtitle } = req.query;
+  const { tier, quality, subtitle, verified } = req.query;
   let filtered = sources;
   
   if (tier) filtered = filtered.filter(s => s.tier === parseInt(tier));
   if (quality === '4k') filtered = filtered.filter(s => s.supports4k);
   if (subtitle === 'true') filtered = filtered.filter(s => s.supportsSubtitles);
+  if (verified === 'true') filtered = filtered.filter(s => s.verified);
   
   res.json({ success: true, count: filtered.length, sources: filtered });
 });
@@ -109,6 +117,12 @@ app.get('/api/extract-all', async (req, res) => {
   }
 });
 
+// Real-time Reliability Stats
+app.get('/api/reliability', (req, res) => {
+  const stats = extractor.getReliabilityStats();
+  res.json({ success: true, data: stats });
+});
+
 // Health Check
 app.get('/api/health', (req, res) => {
   res.json({
@@ -117,6 +131,7 @@ app.get('/api/health', (req, res) => {
     uptime: process.uptime(),
     sources: {
       total: sourceStats.total,
+      verified: sourceStats.verified,
       with4k: sourceStats.with4k,
       withSubtitles: sourceStats.withSubtitles
     }
@@ -127,12 +142,13 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
-║              🎬 Stream_V0 v1.0.0                          ║
+║              🎬 Stream_V0 v1.1.0                          ║
 ║              👤 Author: Maaoui Adem                       ║
 ╠═══════════════════════════════════════════════════════════╣
-║  ✅ ${sourceStats.total} Sources Loaded                    ║
+║  ✅ ${sourceStats.total} Verified Sources                  ║
 ║  ✅ ${sourceStats.with4k} Sources with 4K Support          ║
 ║  ✅ ${sourceStats.withSubtitles} Sources with Subtitles    ║
+║  ✅ Real Reliability Tracking            ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  📡 API: http://localhost:${PORT}                          ║
 ╚═══════════════════════════════════════════════════════════╝
