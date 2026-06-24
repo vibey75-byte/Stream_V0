@@ -22,6 +22,7 @@ app.get('/', (req, res) => {
   res.json({
     name: 'Stream_V0',
     version: '1.1.0',
+    env: process.env.NODE_ENV || 'development',
     author: 'Maaoui Adem',
     description: 'Professional Multi-Source M3U8 Extractor (45+ Verified Sources)',
     features: [
@@ -129,6 +130,7 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    env: process.env.NODE_ENV,
     sources: {
       total: sourceStats.total,
       verified: sourceStats.verified,
@@ -139,26 +141,16 @@ app.get('/api/health', (req, res) => {
 });
 
 // Start
-app.listen(PORT, () => {
-  console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║              🎬 Stream_V0 v1.1.0                          ║
-║              👤 Author: Maaoui Adem                       ║
-╠═══════════════════════════════════════════════════════════╣
-║  ✅ ${sourceStats.total} Verified Sources                  ║
-║  ✅ ${sourceStats.with4k} Sources with 4K Support          ║
-║  ✅ ${sourceStats.withSubtitles} Sources with Subtitles    ║
-║  ✅ Real Reliability Tracking            ║
-╠═══════════════════════════════════════════════════════════╣
-║  📡 API: http://localhost:${PORT}                          ║
-╚═══════════════════════════════════════════════════════════╝
-  `);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('Stream_V0 v1.1.0 started');
+  console.log('Environment: ' + (process.env.NODE_ENV || 'development'));
+  console.log('Sources loaded: ' + sourceStats.total);
+  console.log('API: http://localhost:' + PORT);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('
-🛑 Shutting down...');
+  console.log('Shutting down...');
   await extractor.close();
   process.exit(0);
 });
