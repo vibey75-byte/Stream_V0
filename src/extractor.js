@@ -1,14 +1,5 @@
 import axios from 'axios';
-import * as cheerio from 'cheerio';
 import { getSourceById } from './sources.js';
-
-const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-];
-
-const getRandomUA = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 
 export class AdvancedExtractor {
   constructor() {
@@ -17,169 +8,113 @@ export class AdvancedExtractor {
 
   async extract({ source, movieId, season, episode, options = {} }) {
     const sourceData = getSourceById(source);
+    if (!sourceData) throw new Error(`Source "${source}" not found`);
 
-    if (!sourceData) {
-      throw new Error(`Source "${source}" not found`);
-    }
-
-    const baseUrl = sourceData.baseUrl;
     let embedUrl;
-
     if (season && episode) {
-      embedUrl = `${baseUrl}${movieId}/${season}/${episode}`;
+      embedUrl = `${sourceData.baseUrl}${movieId}/${season}/${episode}`;
     } else {
-      embedUrl = `${baseUrl}${movieId}`;
+      embedUrl = `${sourceData.baseUrl}${movieId}`;
     }
-
-    console.log(`Extracting from ${sourceData.name}: ${embedUrl}`);
 
     try {
-      const result = await this.fetchAndExtract(embedUrl, sourceData, movieId, season, episode);
-      await this.updateReliability(source, result.m3u8Urls.length > 0);
-      return result;
+      const m3u8Urls = await this.fetchFromAPI(movieId, season, episode);
+      await this.updateReliability(source, m3u8Urls.length > 0);
+      return {
+        source: sourceData.name,
+        sourceId: source,
+        movieId, season, episode, embedUrl,
+        m3u8Urls,
+        subtitles: [],
+        timestamp: new Date().toISOString()
+      };
     } catch (error) {
-      console.error(`Error from ${sourceData.name}:`, error.message);
       await this.updateReliability(source, false);
       return {
         source: sourceData.name,
         sourceId: source,
-        movieId,
-        season,
-        episode,
-        embedUrl,
-        m3u8Urls: [],
-        subtitles: [],
+        movieId, season, episode, embedUrl,
+        m3u8Urls: [], subtitles: [],
         timestamp: new Date().toISOString(),
         error: error.message
       };
     }
   }
 
-  async fetchAndExtract(embedUrl, sourceData, movieId, season, episode) {
-    const headers = {
-      'User-Agent': getRandomUA(),
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Referer': 'https://www.google.com/',
-      'DNT': '1',
-      'Connection': 'keep-alive',
-      'Upgrade-Insecure-Requests': '1',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'none',
-      'Cache-Control': 'max-age=0'
-    };
+  async fetchFromAPI(movieId, season, episode) {
+    const apis = [];
 
-    const response = await axios.get(embedUrl, {
-      headers,
-      timeout: parseInt(process.env.API_TIMEOUT) || 15000,
-      maxRedirects: 5,
-      validateStatus: (status) => status < 500
-    });
-
-    const html = response.data;
-    const $ = cheerio.load(html);
-
-    const m3u8Urls = [];
-    const foundUrls = new Set();
-    const subtitles = [];
-    const seenSubs = new Set();
-
-    $('script').each((_, el) => {
-      const content = $(el).html() || '';
-
-      const m3u8Patterns = [
-        /["'`](https?:\/\/[^"'`\s]*\.m3u8[^"'`\s]*?)["'`]/gi,
-        /source:\s*["'`](https?:\/\/[^"'`\s]*\.m3u8[^"'`\s]*?)["'`]/gi,
-        /file:\s*["'`](https?:\/\/[^"'`\s]*\.m3u8[^"'`\s]*?)["'`]/gi,
-        /src:\s*["'`](https?:\/\/[^"'`\s]*\.m3u8[^"'`\s]*?)["'`]/gi,
-        /hls[Uu]rl["\s]*[:=]["\s]*["'`]?(https?:\/\/[^"'`\s]*\.m3u8[^"'`\s]*?)["'`\s,;]/gi,
-        /manifest["\s]*[:=]["\s]*["'`]?(https?:\/\/[^"'`\s]*\.m3u8[^"'`\s]*?)["'`\s,;]/gi,
-        /"url"\s*:\s*"(https?:\/\/[^"]*\.m3u8[^"]*)"/gi,
-        /\burl\s*=\s*["'](https?:\/\/[^"']*\.m3u8[^"']*)/gi
-      ];
-
-      m3u8Patterns.forEach(pattern => {
-        let match;
-        pattern.lastIndex = 0;
-        while ((match = pattern.exec(content)) !== null) {
-          const url = match[1];
-          if (url && !foundUrls.has(url)) {
-            foundUrls.add(url);
-            m3u8Urls.push({
-              url,
-              quality: this.detectQualityFromUrl(url),
-              type: 'hls'
-            });
-          }
-        }
-      });
-
-      const subPatterns = [
-        /["'`](https?:\/\/[^"'`\s]*\.(vtt|srt)[^"'`\s]*?)["'`]/gi,
-        /subtitle[s]?\s*:\s*["'`](https?:\/\/[^"'`\s]*\.(vtt|srt)[^"'`\s]*?)["'`]/gi
-      ];
-
-      subPatterns.forEach(pattern => {
-        let match;
-        pattern.lastIndex = 0;
-        while ((match = pattern.exec(content)) !== null) {
-          const url = match[1];
-          if (url && !seenSubs.has(url)) {
-            seenSubs.add(url);
-            subtitles.push({
-              url,
-              language: 'auto',
-              type: url.includes('.vtt') ? 'vtt' : 'srt'
-            });
-          }
-        }
-      });
-    });
-
-    $('source').each((_, el) => {
-      const src = $(el).attr('src') || '';
-      if (src.includes('.m3u8') && !foundUrls.has(src)) {
-        foundUrls.add(src);
-        m3u8Urls.push({ url: src, quality: this.detectQualityFromUrl(src), type: 'hls' });
-      }
-    });
-
-    $('track').each((_, el) => {
-      const src = $(el).attr('src') || '';
-      const kind = $(el).attr('kind') || '';
-      if ((kind === 'subtitles' || kind === 'captions') && src && !seenSubs.has(src)) {
-        seenSubs.add(src);
-        subtitles.push({
-          url: src,
-          language: $(el).attr('label') || $(el).attr('srclang') || 'en',
-          type: src.includes('.vtt') ? 'vtt' : 'srt'
-        });
-      }
-    });
-
-    if (m3u8Urls.length === 0) {
-      const iframeSrc = $('iframe').first().attr('src');
-      if (iframeSrc && iframeSrc.startsWith('http') && iframeSrc !== embedUrl) {
-        try {
-          const nested = await this.fetchAndExtract(iframeSrc, sourceData, movieId, season, episode);
-          return nested;
-        } catch (_) {}
-      }
+    // VidSrc.rip API
+    if (season && episode) {
+      apis.push(`https://vidsrc.rip/api/tv/${movieId}/${season}/${episode}`);
+      apis.push(`https://vidsrc.icu/api/tv?imdb=${movieId}&season=${season}&episode=${episode}`);
+      apis.push(`https://vidsrc.me/api/tv?imdb=${movieId}&season=${season}&episode=${episode}`);
+    } else {
+      apis.push(`https://vidsrc.rip/api/movie/${movieId}`);
+      apis.push(`https://vidsrc.icu/api/movie?imdb=${movieId}`);
+      apis.push(`https://vidsrc.me/api/movie?imdb=${movieId}`);
     }
 
-    return {
-      source: sourceData.name,
-      sourceId: sourceData.id,
-      movieId,
-      season,
-      episode,
-      embedUrl,
-      m3u8Urls: [...new Map(m3u8Urls.map(item => [item.url, item])).values()],
-      subtitles: [...new Map(subtitles.map(item => [item.url, item])).values()],
-      timestamp: new Date().toISOString()
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'application/json, text/plain, */*',
+      'Referer': 'https://vidsrc.me/'
     };
+
+    for (const url of apis) {
+      try {
+        const res = await axios.get(url, {
+          headers,
+          timeout: 10000,
+          validateStatus: s => s < 500
+        });
+
+        if (res.data && res.status === 200) {
+          const links = this.parseAPIResponse(res.data);
+          if (links.length > 0) return links;
+        }
+      } catch (_) {}
+    }
+
+    return [];
+  }
+
+  parseAPIResponse(data) {
+    const links = [];
+    const foundUrls = new Set();
+
+    const addUrl = (url) => {
+      if (url && typeof url === 'string' && url.includes('.m3u8') && !foundUrls.has(url)) {
+        foundUrls.add(url);
+        links.push({ url, quality: this.detectQualityFromUrl(url), type: 'hls' });
+      }
+    };
+
+    if (typeof data === 'string') {
+      const matches = data.match(/https?:\/\/[^"'\s]*\.m3u8[^"'\s]*/gi) || [];
+      matches.forEach(addUrl);
+      return links;
+    }
+
+    if (Array.isArray(data)) {
+      data.forEach(item => {
+        addUrl(item?.url || item?.stream || item?.link || item?.src);
+      });
+      return links;
+    }
+
+    if (typeof data === 'object') {
+      const checkObj = (obj) => {
+        if (!obj || typeof obj !== 'object') return;
+        Object.values(obj).forEach(val => {
+          if (typeof val === 'string') addUrl(val);
+          else if (typeof val === 'object') checkObj(val);
+        });
+      };
+      checkObj(data);
+    }
+
+    return links;
   }
 
   detectQualityFromUrl(url) {
