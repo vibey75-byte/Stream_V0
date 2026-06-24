@@ -51,7 +51,7 @@ export class AdvancedExtractor {
       embedUrl = `${baseUrl}${movieId}`;
     }
 
-    console.log(`🎬 Extracting from ${sourceData.name}: ${embedUrl}`);
+    console.log(`Extracting from ${sourceData.name}: ${embedUrl}`);
 
     try {
       const browser = await this.initBrowser();
@@ -71,7 +71,6 @@ export class AdvancedExtractor {
 
       await page.close();
 
-      // Update reliability
       await this.updateReliability(source, true);
 
       return {
@@ -89,7 +88,6 @@ export class AdvancedExtractor {
     } catch (error) {
       console.error(`Error from ${sourceData.name}:`, error.message);
       
-      // Update reliability
       await this.updateReliability(source, false);
       
       return await this.fallbackExtract(embedUrl, sourceData, movieId);
@@ -114,21 +112,26 @@ export class AdvancedExtractor {
 
     const jsUrls = await page.evaluate(() => {
       const urls = new Set();
-      const patterns = [
-        /["'](https?://[^"']*.m3u8[^"']*)["']/gi,
-        /source:s*["'](https?://[^"']*.m3u8[^"']*)["']/gi,
-        /file:s*["'](https?://[^"']*.m3u8[^"']*)["']/gi
-      ];
-
+      
       const scripts = document.querySelectorAll('script');
       scripts.forEach(script => {
         const content = script.textContent || script.innerHTML;
-        patterns.forEach(pattern => {
-          let match;
-          while ((match = pattern.exec(content)) !== null) {
-            urls.add(match[1]);
-          }
-        });
+        
+        const regex1 = /['"](https?://[^'"]*.m3u8[^'"]*)['"]/gi;
+        const regex2 = /source:s*['"](https?://[^'"]*.m3u8[^'"]*)['"]/gi;
+        const regex3 = /file:s*['"](https?://[^'"]*.m3u8[^'"]*)['"]/gi;
+        
+        let match;
+        
+        while ((match = regex1.exec(content)) !== null) {
+          urls.add(match[1]);
+        }
+        while ((match = regex2.exec(content)) !== null) {
+          urls.add(match[1]);
+        }
+        while ((match = regex3.exec(content)) !== null) {
+          urls.add(match[1]);
+        }
       });
 
       return Array.from(urls);
@@ -169,25 +172,34 @@ export class AdvancedExtractor {
       const scripts = document.querySelectorAll('script');
       scripts.forEach(script => {
         const content = script.textContent || script.innerHTML;
-        const patterns = [
-          /subtitles?:s*["'](https?://[^"']*.(vtt|srt)[^"']*)["']/gi,
-          /tracks?:s*["'](https?://[^"']*.(vtt|srt)[^"']*)["']/gi
-        ];
-
-        patterns.forEach(pattern => {
-          let match;
-          while ((match = pattern.exec(content)) !== null) {
-            const url = match[1];
-            if (url && !seenUrls.has(url)) {
-              seenUrls.add(url);
-              subs.push({
-                url: url.replace(/["']/g, ''),
-                language: 'auto',
-                type: url.includes('vtt') ? 'vtt' : 'srt'
-              });
-            }
+        
+        const regex1 = /subtitles?:s*['"](https?://[^'"]*.(vtt|srt)[^'"]*)['"]/gi;
+        const regex2 = /tracks?:s*['"](https?://[^'"]*.(vtt|srt)[^'"]*)['"]/gi;
+        
+        let match;
+        
+        while ((match = regex1.exec(content)) !== null) {
+          const url = match[1];
+          if (url && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            subs.push({
+              url: url.replace(/['"]/g, ''),
+              language: 'auto',
+              type: url.includes('vtt') ? 'vtt' : 'srt'
+            });
           }
-        });
+        }
+        while ((match = regex2.exec(content)) !== null) {
+          const url = match[1];
+          if (url && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            subs.push({
+              url: url.replace(/['"]/g, ''),
+              language: 'auto',
+              type: url.includes('vtt') ? 'vtt' : 'srt'
+            });
+          }
+        }
       });
 
       return subs;
@@ -237,10 +249,10 @@ export class AdvancedExtractor {
 
       $('script').each((_, element) => {
         const content = $(element).html() || '';
-        const m3u8Pattern = /(https?://[^"'s]*.m3u8[^"'s]*)/gi;
+        const regex = /(https?://[^"'s]*.m3u8[^"'s]*)/gi;
         let match;
         
-        while ((match = m3u8Pattern.exec(content)) !== null) {
+        while ((match = regex.exec(content)) !== null) {
           m3u8Urls.push({
             url: match[1],
             quality: this.detectQualityFromUrl(match[1]),
