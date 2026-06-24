@@ -117,9 +117,13 @@ export class AdvancedExtractor {
       scripts.forEach(script => {
         const content = script.textContent || script.innerHTML;
         
-        const regex1 = new RegExp("['"](https?://[^'"]*\\.m3u8[^'"]*)['"]", 'gi');
-        const regex2 = new RegExp("source:\\s*['"](https?://[^'"]*\\.m3u8[^'"]*)['"]", 'gi');
-        const regex3 = new RegExp("file:\\s*['"](https?://[^'"]*\\.m3u8[^'"]*)['"]", 'gi');
+        const pattern1 = '["\\'](https?://[^"\\'\\s]*\\.m3u8[^"\\'\\s]*)["\\']';
+        const pattern2 = 'source:\\s*["\\'](https?://[^"\\'\\s]*\\.m3u8[^"\\'\\s]*)["\\']';
+        const pattern3 = 'file:\\s*["\\'](https?://[^"\\'\\s]*\\.m3u8[^"\\'\\s]*)["\\']';
+        
+        const regex1 = new RegExp(pattern1, 'gi');
+        const regex2 = new RegExp(pattern2, 'gi');
+        const regex3 = new RegExp(pattern3, 'gi');
         
         let match;
         
@@ -173,8 +177,11 @@ export class AdvancedExtractor {
       scripts.forEach(script => {
         const content = script.textContent || script.innerHTML;
         
-        const regex1 = new RegExp("subtitles?:\\s*['"](https?://[^'"]*\\.(vtt|srt)[^'"]*)['"]", 'gi');
-        const regex2 = new RegExp("tracks?:\\s*['"](https?://[^'"]*\\.(vtt|srt)[^'"]*)['"]", 'gi');
+        const pattern1 = 'subtitles?:\\s*["\\'](https?://[^"\\'\\s]*\\.(vtt|srt)[^"\\'\\s]*)["\\']';
+        const pattern2 = 'tracks?:\\s*["\\'](https?://[^"\\'\\s]*\\.(vtt|srt)[^"\\'\\s]*)["\\']';
+        
+        const regex1 = new RegExp(pattern1, 'gi');
+        const regex2 = new RegExp(pattern2, 'gi');
         
         let match;
         
@@ -183,7 +190,7 @@ export class AdvancedExtractor {
           if (url && !seenUrls.has(url)) {
             seenUrls.add(url);
             subs.push({
-              url: url.replace(/['"]/g, ''),
+              url: url.replace(/["\\']/g, ''),
               language: 'auto',
               type: url.includes('vtt') ? 'vtt' : 'srt'
             });
@@ -194,7 +201,7 @@ export class AdvancedExtractor {
           if (url && !seenUrls.has(url)) {
             seenUrls.add(url);
             subs.push({
-              url: url.replace(/['"]/g, ''),
+              url: url.replace(/["\\']/g, ''),
               language: 'auto',
               type: url.includes('vtt') ? 'vtt' : 'srt'
             });
@@ -249,7 +256,8 @@ export class AdvancedExtractor {
 
       $('script').each((_, element) => {
         const content = $(element).html() || '';
-        const regex = new RegExp("(https?://[^"'\\s]*\\.m3u8[^"'\\s]*)", 'gi');
+        const pattern = '(https?://[^"\\'\\s]*\\.m3u8[^"\\'\\s]*)';
+        const regex = new RegExp(pattern, 'gi');
         let match;
         
         while ((match = regex.exec(content)) !== null) {
